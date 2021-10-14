@@ -1,0 +1,80 @@
+# Decumulation Tontine Fund (DeTF) Version 3.0
+# Cash Refund at Death with Reserves and Lapses.
+set.seed(1693)
+TPXG<-function(x,t,m,b){exp(exp((x-m)/b)*(1-exp(t/b)))}
+TQXG<-function(x,t1,t2,m,b){TPXG(x,t1,m,b)-TPXG(x,t2,m,b)}
+TLIA<-function(x,y,r,m,b){
+  APV<-function(t){exp(-r*t)*exp(exp((x-m)/b)*(1-exp(t/b)))}
+  sum(APV(1:(y-x)))}
+TLIA_RDB<-function(x,y,r,m,b,k,RDB){
+  periods<-(y-x)*k
+  value<-0
+  for(i in 1:periods){
+    PV<-exp(-r*i/k)
+    value<-value+TPXG(x,i/k,m,b)*PV/k+max(RDB-(i-1)/k,0)*TQXG(x,(i-1)/k,i/k,m,b)*PV}
+  value}
+RTLIA<-function(x,y,r,m,b,k){
+  a_left<-0; a_right<-1/r
+  for (i in 1:100){
+    a<-(a_left+a_right)/2
+    f<-TLIA_RDB(x,y,r,m,b,k,a)-a
+    if (abs(f)<0.0001) {break}
+    if (f<0){a_right<-a} else {a_left<-a}
+  }
+  a}
+# RTLIA Provides Death Benefit and Replaces Basic TLIA.
+x<-65; m<-90; b<-10; GL0<-1000; TH<-35; N<-10000
+EXR<-0.04; SDR<-0.02; r<-0.04; f0<-100
+# Parameters that Govern Lapsation and Redemption
+eta<-c(rep(0.02,15),rep(0,TH-15)); dsc<-0.0
+kappa<-c()
+GLIVE<-matrix(nrow=N,ncol=TH)
+GDEAD<-matrix(nrow=N,ncol=TH)
+LAPSE<-matrix(nrow=N, ncol=TH)
+TCPAY<-matrix(nrow=N,ncol=TH)
+AGDEB<-matrix(nrow=N,ncol=TH)
+AGLAP<-matrix(nrow=N,ncol=TH)
+PORET<-matrix(nrow=N,ncol=TH)
+DETFV<-matrix(nrow=N,ncol=TH)
+TONDV<-matrix(nrow=N,ncol=TH)
+STPRV<-matrix(nrow=N,ncol=TH)
+# Compute Deaths, Lapses and Survivors Here
+for (i in 1:N){
+  GDEAD[i,1]<-rbinom(1,GL0,1-TPXG(x,1,m,b))
+  LAPSE[i,1]<-rbinom(1,GL0,eta[1])
+  GLIVE[i,1]<-GL0-GDEAD[i,1]-LAPSE[i,1]
+  for (j in 2:TH){
+    GDEAD[i,j]<-rbinom(1,GLIVE[i,j-1],1-TPXG(x+j-1,1,m,b))
+    LAPSE[i,j]<-rbinom(1,GLIVE[i,j-1],eta[j])
+    GLIVE[i,j]<-GLIVE[1,j-1]-GDEAD[i,j]-LAPSE[i,j]
+  }}
+# Compute Investment Returns Here (V2.0, no change)
+for (i in 1:N){
+  PORET[i,]<-exp(rnorm(TH,EXR,SDR))-1}
+for (j in 1:TH){
+  for (i in 1:N){
+    STPRV[i,j]<-prod(PORET[i,1:j]+1)^(-1)
+  }}
+# Revised Initial Payout Rate to Provide Death Benefit
+kappa[1]<-1/RTLIA(x,100,r,m,b,1)
+for (i in 2:TH){kappa[i]<-1/TLIA_RDB(x+i-1,x+TH,r,m,b,1,max(1/kappa[1]-i,0))}
+# Compute Fund Values and Dividends Here
+for (i in 1:N){
+  TONDV[i,1]<-kappa[1]*f0
+  TCPAY[i,1]<-TONDV[i,1]
+  AGDEB[i,1]<-f0*GDEAD[i,1]
+  AGLAP[i,1]<-f0*LAPSE[i,1]*(1-dsc)
+  outflow<-TONDV[i,1]*GLIVE[i,1]+AGDEB[i,1]+AGLAP[i,1]
+  DETFV[i,1]<-f0*GL0*(1+PORET[i,1])-outflow
+  for (j in 2:TH){
+    TONDV[i,j]<-kappa[j]*DETFV[i,j-1]/GLIVE[i,j-1]
+    TCPAY[i,j]<-TCPAY[i,j-1]+TONDV[i,j]
+    AGDEB[i,j]<-max(f0-TCPAY[i,j-1],0)*GDEAD[i,j]
+    AGLAP[i,j]<-max(f0-TCPAY[i,j-1],0)*LAPSE[i,j]*(1-dsc)
+    outflow<-TONDV[i,j]*GLIVE[i,j]+AGDEB[i,j]+AGLAP[i,j]
+    DETFV[i,j]<-DETFV[i,j-1]*(1+PORET[i,j])-outflow
+  }}
+mtd<-c(); t<-1:TH
+for (j in 1:TH){mtd[j]<-mean(TONDV[,j])}
+fit<-lm(mtd~t)
+summary(fit)
